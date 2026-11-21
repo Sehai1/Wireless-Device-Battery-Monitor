@@ -96,4 +96,60 @@ void PollMchoseHeadset(PollContext& ctx) {
         ctx.Add(s, kMchoseVid, kV9Pro2Pid);
         break;
     }
+
+    // Aula G7 Pro wireless gaming headset (2.4 GHz dongle)
+    for (const auto& c : ctx.colls) {
+        if (ctx.IsClaimed(c.vid, c.pid)) continue;
+        std::wstring prod = HidProduct(c);
+        std::wstring low = prod;
+        for (auto& ch : low) ch = (wchar_t)towlower(ch);
+        bool isAulaG7 = (low.find(L"aula") != std::wstring::npos && low.find(L"g7") != std::wstring::npos) ||
+                        (low.find(L"g7 pro") != std::wstring::npos);
+        if (!isAulaG7) continue;
+
+        int pct = -1;
+        bool chg = false;
+        if (c.page() == 0xFF07 && c.usage() == 0x0222 && c.outLen() >= 64 && c.inLen() >= 64) {
+            Reply got = QueryV9Pro2(c, pct, chg);
+            if (got != Reply::None) {
+                DeviceStatus s;
+                s.key = L"aula:g7pro";
+                s.name = prod.empty() ? L"Aula G7 Pro" : prod;
+                s.kind = DeviceKind::Headset;
+                s.via = L"2.4 GHz receiver";
+                if (got == Reply::Off) s.asleep = true;
+                else { s.percent = pct; s.charging = chg; }
+                s.graceSec = 1800;
+                ctx.Add(s, c.vid, c.pid);
+                break;
+            }
+        }
+        if (c.featLen() >= 17 && c.page() >= 0xFF00) {
+            HidDev d;
+            if (d.OpenFeatureOnly(c)) {
+                std::vector<BYTE> req(c.featLen(), 0);
+                req[0] = 0x13;
+                req[1] = 0x4A;
+                unsigned sum = 0;
+                for (size_t i = 0; i < 15 && i + 1 < req.size(); i++) sum += req[i];
+                if (req.size() >= 17) req[15] = (BYTE)(sum & 0xFF);
+                if (d.SetFeature(req)) {
+                    Sleep(30);
+                    std::vector<BYTE> rx;
+                    if (d.GetFeature(0x13, rx) && rx.size() >= 7 && rx[6] >= 1 && rx[6] <= 100) {
+                        DeviceStatus s;
+                        s.key = L"aula:g7pro";
+                        s.name = prod.empty() ? L"Aula G7 Pro" : prod;
+                        s.kind = DeviceKind::Headset;
+                        s.via = L"2.4 GHz receiver";
+                        s.percent = rx[6];
+                        s.charging = (rx[5] == 1);
+                        s.graceSec = 1800;
+                        ctx.Add(s, c.vid, c.pid);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
